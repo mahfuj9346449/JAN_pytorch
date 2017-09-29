@@ -90,10 +90,10 @@ def main():
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
 
-    optimizer = SGD([i.copy() for i in args.SGD_param], args.lr,
-                     momentum=args.momentum,
-                     weight_decay=args.weight_decay)#,
-                     # nesterov=False)
+    optimizer = torch.optim.SGD([i.copy() for i in args.SGD_param], args.lr,
+                                momentum=args.momentum,
+                                weight_decay=args.weight_decay)#,
+    # nesterov=False)
 
     cudnn.benchmark = True
 
@@ -133,7 +133,6 @@ def main():
         datasets.ImageFolder(traindir, transforms.Compose([
             MyScale((256, 256)),
             transforms.RandomSizedCrop(224),
-            # transforms.CenterCrop(224),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -145,7 +144,6 @@ def main():
         datasets.ImageFolder(valdir, transforms.Compose([
             MyScale((256, 256)),
             transforms.RandomSizedCrop(224),
-            # transforms.CenterCrop(224),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,

@@ -47,6 +47,7 @@ class Net(nn.Module):
         else:
             self.feature_dim = model.fc.in_features
             model = nn.Sequential(*list(model.children())[:-1])
+            
         self.origin_feature = torch.nn.DataParallel(model)
         self.model = args.model
         self.arch = args.arch
@@ -83,22 +84,25 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
     top1 = AverageMeter()
     entropy_loss = AverageMeter()
 
-    source_cycle = itertools.cycle(source_loader)
-    target_cycle = itertools.cycle(target_loader)
+    source_cycle = iter(source_loader)
+    target_cycle = iter(target_loader)
 
     end = time.time()
-    model.train()
+    model.train(True)
     for i in range(args.train_iter):
         global global_iter
         global_iter = i
         adjust_learning_rate(optimizer, i, args)
         data_time.update(time.time() - end)
+        
         source_input, label = source_cycle.next()
-        if source_input.size()[0] < args.batch_size:
-            source_input, label = source_cycle.next()
         target_input, _ = target_cycle.next()
-        if target_input.size()[0] < args.batch_size:
+        if source_input.size()[0] < args.batch_size or target_input.size()[0] < args.batch_size:
+            source_cycle = iter(source_loader)
+            target_cycle = iter(target_loader)
+            source_input, label = source_cycle.next()
             target_input, _ = target_cycle.next()
+            
         label = label.cuda(async=True)
         source_var = torch.autograd.Variable(source_input)
         target_var = torch.autograd.Variable(target_input)
@@ -113,7 +117,7 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
         softmax = nn.Softmax()
         jmmd_loss = JMMDLoss([source_feature, softmax(source_output)], [target_feature, softmax(target_output)])
 
-        loss = acc_loss + args.alpha * jmmd_loss
+        loss = acc_loss + jmmd_loss
 
         prec1, _ = accuracy(source_output.data, label, topk=(1, 5))
 
@@ -135,7 +139,7 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
         if i % args.print_freq == 0:
             print('Iter: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Loss {loss1:.4f} {loss2:.4f}\t'
+                  'Loss {loss1:.4f}/{loss2:.4f}\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                    i, args.train_iter, batch_time=batch_time,
@@ -143,7 +147,7 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
 
         if i % args.test_iter == 0 and i != 0:
             validate(val_loader, model, criterion, args)
-            model.train()
+            model.train(True)
             batch_time.reset()
             data_time.reset()
             losses.reset()
