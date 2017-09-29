@@ -39,27 +39,116 @@ class GRLayer(torch.autograd.Function):
         return (-lr) * gradOutput
 
 
-def create_W(dimensions):
-    nets = []
-    for in_dim, out_dim in zip(dimensions[:-1], dimensions[1:]):
-        nets += [
-            nn.Linear(in_dim, out_dim),
-            nn.ReLU()
-        ]
-    return nn.Sequential(*nets[:-1]) # Remove last relu
+class Generator(nn.Module):
+    def __init__(self, input_nc, output_nc, ngf):
+        super(Generator,self).__init__()
+        self.conv1 = nn.Conv2d(input_nc, ngf, 4, 2, 1)
+        self.conv2 = nn.Conv2d(ngf, ngf * 2, 4, 2, 1)
+        self.conv3 = nn.Conv2d(ngf * 2, ngf * 4, 4, 2, 1)
+        self.conv4 = nn.Conv2d(ngf * 4, ngf * 8, 4, 2, 1)
+        self.conv5 = nn.Conv2d(ngf * 8, ngf * 8, 4, 2, 1)
+        self.conv6 = nn.Conv2d(ngf * 8, ngf * 8, 4, 2, 1)
+        self.conv7 = nn.Conv2d(ngf * 8, ngf * 8, 4, 2, 1)
+        self.conv8 = nn.Conv2d(ngf * 8, ngf * 8, 4, 2, 1)
+        self.dconv1 = nn.ConvTranspose2d(ngf * 8, ngf * 8, 4, 2, 1)
+        self.dconv2 = nn.ConvTranspose2d(ngf * 8 * 2, ngf * 8, 4, 2, 1)
+        self.dconv3 = nn.ConvTranspose2d(ngf * 8 * 2, ngf * 8, 4, 2, 1)
+        self.dconv4 = nn.ConvTranspose2d(ngf * 8 * 2, ngf * 8, 4, 2, 1)
+        self.dconv5 = nn.ConvTranspose2d(ngf * 8 * 2, ngf * 4, 4, 2, 1)
+        self.dconv6 = nn.ConvTranspose2d(ngf * 4 * 2, ngf * 2, 4, 2, 1)
+        self.dconv7 = nn.ConvTranspose2d(ngf * 2 * 2, ngf, 4, 2, 1)
+        self.dconv8 = nn.ConvTranspose2d(ngf * 2, output_nc, 4, 2, 1)
+
+        self.batch_norm = nn.BatchNorm2d(ngf)
+        self.batch_norm2 = nn.BatchNorm2d(ngf * 2)
+        self.batch_norm4 = nn.BatchNorm2d(ngf * 4)
+        self.batch_norm8 = nn.BatchNorm2d(ngf * 8)
+
+        self.leaky_relu = nn.LeakyReLU(0.2, True)
+        self.relu = nn.ReLU(True)
+        self.dropout = nn.Dropout(0.5)
+        self.tanh = nn.Tanh()
+
+    def forward(self, input):
+        # Encoder
+        # Convolution layers:
+        # input is (nc) x 256 x 256
+        e1 = self.conv1(input)
+        # state size is (ngf) x 128 x 128
+        e2 = self.batch_norm2(self.conv2(self.leaky_relu(e1)))
+        # state size is (ngf x 2) x 64 x 64
+        e3 = self.batch_norm4(self.conv3(self.leaky_relu(e2)))
+        # state size is (ngf x 4) x 32 x 32
+        e4 = self.batch_norm8(self.conv4(self.leaky_relu(e3)))
+        # state size is (ngf x 8) x 16 x 16
+        e5 = self.batch_norm8(self.conv5(self.leaky_relu(e4)))
+        # state size is (ngf x 8) x 8 x 8
+        e6 = self.batch_norm8(self.conv6(self.leaky_relu(e5)))
+        # state size is (ngf x 8) x 4 x 4
+        e7 = self.batch_norm8(self.conv7(self.leaky_relu(e6)))
+        # state size is (ngf x 8) x 2 x 2
+        # No batch norm on output of Encoder
+        e8 = self.conv8(self.leaky_relu(e7))
+
+        # Decoder
+        # Deconvolution layers:
+        # state size is (ngf x 8) x 1 x 1
+        d1_ = self.dropout(self.batch_norm8(self.dconv1(self.relu(e8))))
+        # state size is (ngf x 8) x 2 x 2
+        d1 = torch.cat((d1_, e7), 1)
+        d2_ = self.dropout(self.batch_norm8(self.dconv2(self.relu(d1))))
+        # state size is (ngf x 8) x 4 x 4
+        d2 = torch.cat((d2_, e6), 1)
+        d3_ = self.dropout(self.batch_norm8(self.dconv3(self.relu(d2))))
+        # state size is (ngf x 8) x 8 x 8
+        d3 = torch.cat((d3_, e5), 1)
+        d4_ = self.batch_norm8(self.dconv4(self.relu(d3)))
+        # state size is (ngf x 8) x 16 x 16
+        d4 = torch.cat((d4_, e4), 1)
+        d5_ = self.batch_norm4(self.dconv5(self.relu(d4)))
+        # state size is (ngf x 4) x 32 x 32
+        d5 = torch.cat((d5_, e3), 1)
+        d6_ = self.batch_norm2(self.dconv6(self.relu(d5)))
+        # state size is (ngf x 2) x 64 x 64
+        d6 = torch.cat((d6_, e2), 1)
+        d7_ = self.batch_norm(self.dconv7(self.relu(d6)))
+        # state size is (ngf) x 128 x 128
+        d7 = torch.cat((d7_, e1), 1)
+        d8 = self.dconv8(self.relu(d7))
+        # state size is (nc) x 256 x 256
+        output = self.tanh(d8)
+        return output
 
 
-def create_D(dimensions):
-    nets = []
-    for in_dim, out_dim in zip(dimensions[:-1], dimensions[1:]):
-        nets += [
-            nn.Linear(in_dim, out_dim),
-            nn.ReLU()
-        ]
-    nets[-1] = nn.Sigmoid()
-    nets[-2].weight.data.normal_(0, 0.03)
-    nets[-2].bias.data.fill_(0.0)
-    return nn.Sequential(*nets)
+class Discriminator(nn.Module):
+    def __init__(self,input_nc,output_nc,ndf):
+        super(Discriminator,self).__init__()
+        # 256 x 256
+        self.layer1 = nn.Sequential(nn.Conv2d(input_nc+output_nc,ndf,kernel_size=4,stride=2,padding=1),
+                                 nn.LeakyReLU(0.2,inplace=True))
+        # 128 x 128
+        self.layer2 = nn.Sequential(nn.Conv2d(ndf,ndf*2,kernel_size=4,stride=2,padding=1),
+                                 nn.BatchNorm2d(ndf*2),
+                                 nn.LeakyReLU(0.2,inplace=True))
+        # 64 x 64
+        self.layer3 = nn.Sequential(nn.Conv2d(ndf*2,ndf*4,kernel_size=4,stride=2,padding=1),
+                                 nn.BatchNorm2d(ndf*4),
+                                 nn.LeakyReLU(0.2,inplace=True))
+        # 32 x 32
+        self.layer4 = nn.Sequential(nn.Conv2d(ndf*4,ndf*8,kernel_size=4,stride=1,padding=1),
+                                 nn.BatchNorm2d(ndf*8),
+                                 nn.LeakyReLU(0.2,inplace=True))
+        # 31 x 31
+        self.layer5 = nn.Sequential(nn.Conv2d(ndf*8,1,kernel_size=4,stride=1,padding=1),
+                                 nn.Sigmoid())
+
+    def forward(self,x):
+        out = self.layer1(x)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.layer5(out)
+        return out
 
 
 class Net(nn.Module):
@@ -95,15 +184,17 @@ class Net(nn.Module):
         self.fcb_s = nn.Linear(self.feature_dim, args.bottleneck)
         self.fcb_s.weight.data.normal_(0, 0.005)
         self.fcb_s.bias.data.fill_(0.1)
-        self.fcb_t = nn.Linear(self.feature_dim, args.bottleneck)
-        self.fcb_t.weight.data.normal_(0, 0.005)
-        self.fcb_t.bias.data.fill_(0.1)
+        # self.fcb_t = nn.Linear(self.feature_dim, args.bottleneck)
+        # self.fcb_t.weight.data.normal_(0, 0.005)
+        # self.fcb_t.bias.data.fill_(0.1)
+        self.fcb_t = self.fcb_s
         self.fc_s = nn.Linear(args.bottleneck, args.classes)
         self.fc_s.weight.data.normal_(0, 0.01)
         self.fc_s.bias.data.fill_(0.0)
-        self.fc_t = nn.Linear(args.bottleneck, args.classes)
-        self.fc_t.weight.data.normal_(0, 0.01)
-        self.fc_t.bias.data.fill_(0.0)
+        # self.fc_t = nn.Linear(args.bottleneck, args.classes)
+        # self.fc_t.weight.data.normal_(0, 0.01)
+        # self.fc_t.bias.data.fill_(0.0)
+        self.fc_t = self.fc_s
 
         self.W_st = create_W([args.bottleneck, args.bottleneck])
         self.W_ts = create_W([args.bottleneck, args.bottleneck])
@@ -153,8 +244,8 @@ class Net(nn.Module):
             feature_t = self.fcb_t(orign_feature_t)
             output_s = self.fc_s(feature_s)
             output_t = self.fc_t(feature_t)
-            fake_feature_t = self.W_st(feature_s) + feature_s
-            fake_feature_s = self.W_ts(feature_t) + feature_t
+            fake_feature_t = self.W_st(feature_s)
+            fake_feature_s = self.W_ts(feature_t)
             cycle_s = self.W_ts(fake_feature_t)
             cycle_t = self.W_st(fake_feature_s)
             fake_output_t = self.fc_t(fake_feature_t)
