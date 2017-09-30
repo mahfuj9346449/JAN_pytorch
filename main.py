@@ -151,7 +151,8 @@ def main():
         num_workers=args.workers, pin_memory=True)
 
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
+        # TODO: Change temporarily
+        datasets.ImageFolder(traindir, transforms.Compose([
             MyScale((256, 256)),
             transforms.CenterCrop(224),
             transforms.ToTensor(),

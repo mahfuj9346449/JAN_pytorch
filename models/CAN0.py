@@ -190,6 +190,13 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='instance', use_dr
     return netG
 
 
+def convert_state_dict(state_dict):
+    new_state_dict = collections.OrderedDict()
+    for k, v in state_dict.items():
+        new_state_dict[k.encode('utf-8')] = v
+    return new_state_dict
+
+
 def train_val(source_loader, target_loader, val_loader, model, criterion, optimizer, args):
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -197,17 +204,16 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
     top1 = AverageMeter()
 
     source_cycle = itertools.cycle(source_loader)
-    target_cycle = itertools.cycle(target_loader)
 
     end = time.time()
     netG_A = define_G(3, 3, 64, 'resnet_9blocks')
-    state_dict = torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan/latest_net_G_A.pth')
-    new_state_dict = collections.OrderedDict()
-    for k, v in state_dict.items():
-        new_state_dict[k.encode('utf-8')] = v
-    #print('\n'.join([str(i[0]) + '\n' + str(i[1]) for i in zip(netG_A.state_dict().keys(), new_state_dict.keys())]))
-    netG_A.load_state_dict(new_state_dict)
+    state_dict = convert_state_dict(torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan2/latest_net_G_A.pth'))
+    netG_A.load_state_dict(state_dict)
     netG_A.eval()
+    netG_B = define_G(3, 3, 64, 'resnet_9blocks')
+    state_dict = convert_state_dict(torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan2/latest_net_G_B.pth'))
+    netG_B.load_state_dict(state_dict)
+    netG_B.eval()
     model.train()
     for i in range(args.train_iter):
         global global_iter
@@ -222,11 +228,12 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
         label_var = torch.autograd.Variable(label)
 
         fake_target_var = netG_A(source_var)
-        fake_target_output = model(fake_target_var)
+        rec_source_var = netG_B(fake_target_var)
+        rec_source_output = model(rec_source_var)
 
-        loss = criterion(fake_target_output, label_var)
+        loss = criterion(rec_source_output, label_var)
 
-        prec1, _ = accuracy(fake_target_output.data, label, topk=(1, 5))
+        prec1, _ = accuracy(rec_source_output.data, label, topk=(1, 5))
 
         losses.update(loss.data[0], args.batch_size)
         top1.update(prec1[0], args.batch_size)
