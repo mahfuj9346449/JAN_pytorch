@@ -5,6 +5,7 @@ import shutil
 import time
 import itertools
 import functools
+import collections
 
 import torch
 import torch.nn as nn
@@ -109,7 +110,7 @@ class ResnetGenerator(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, input):
-        return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
+        return nn.parallel.data_parallel(self.model, input)
 
 
 class Net(nn.Module):
@@ -174,7 +175,7 @@ def weights_init(m):
         m.bias.data.fill_(0)
 
 
-def define_G(input_nc, output_nc, ngf, which_model_netG, norm='instance', use_dropout=True):
+def define_G(input_nc, output_nc, ngf, which_model_netG, norm='instance', use_dropout=False):
     netG = None
     norm_layer = get_norm_layer(norm_type=norm)
 
@@ -200,7 +201,12 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
 
     end = time.time()
     netG_A = define_G(3, 3, 64, 'resnet_9blocks')
-    netG_A.load_state_dict(torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan/latest_net_G_A.pth'))
+    state_dict = torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan/latest_net_G_A.pth')
+    new_state_dict = collections.OrderedDict()
+    for k, v in state_dict.items():
+        new_state_dict[k.encode('utf-8')] = v
+    #print('\n'.join([str(i[0]) + '\n' + str(i[1]) for i in zip(netG_A.state_dict().keys(), new_state_dict.keys())]))
+    netG_A.load_state_dict(new_state_dict)
     netG_A.eval()
     model.train()
     for i in range(args.train_iter):
@@ -263,11 +269,11 @@ def validate(val_loader, model, criterion, args):
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
         target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input, volatile=True)
+        input_var = torch.autograd.Variable(input, volatile=True).cuda()
         target_var = torch.autograd.Variable(target, volatile=True)
 
         # compute output
-        output, _ = model(input_var)
+        output = model(input_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss
