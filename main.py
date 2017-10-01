@@ -104,9 +104,9 @@ def main():
     traindir = '/home/dataset/office/domain_adaptation_images/amazon/images'
     valdir = '/home/dataset/office/domain_adaptation_images/webcam/images'
     
-    
-    normalize = transforms.Normalize(mean=torch.load('./models/resnet_mean.dat') / 255,
-                                     std=[0.229, 0.224, 0.225])
+    # TODO: For debug
+    normalize = transforms.Normalize([0.485, 0.456, 0.406],
+                                     [0.229, 0.224, 0.225])
     class MyScale(object):
         def __init__(self, size, interpolation=Image.BILINEAR):
             self.size = size
