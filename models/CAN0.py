@@ -218,11 +218,11 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
 
     end = time.time()
     netG_A = define_G(3, 3, 64, 'resnet_9blocks')
-    state_dict = convert_state_dict(torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan3/latest_net_G_A.pth'))
+    state_dict = convert_state_dict(torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan/latest_net_G_A.pth'))
     netG_A.load_state_dict(state_dict)
     netG_A.eval()
     netG_B = define_G(3, 3, 64, 'resnet_9blocks')
-    state_dict = convert_state_dict(torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan3/latest_net_G_B.pth'))
+    state_dict = convert_state_dict(torch.load('/home/sun/pytorch-CycleGAN-and-pix2pix/checkpoints/office-cycle_gan/latest_net_G_B.pth'))
     netG_B.load_state_dict(state_dict)
     netG_B.eval()
     model.train()
