@@ -197,6 +197,17 @@ def convert_state_dict(state_dict):
     return new_state_dict
 
 
+origin_mean = torch.autograd.Variable(torch.Tensor([0.5, 0.5, 0.5])).view(-1, 1, 1).cuda()
+origin_std = torch.autograd.Variable(torch.Tensor([0.5, 0.5, 0.5])).view(-1, 1, 1).cuda()
+new_mean = torch.autograd.Variable(torch.Tensor([0.485, 0.456, 0.406])).view(-1, 1, 1).cuda()
+new_std = torch.autograd.Variable(torch.Tensor([0.229, 0.224, 0.225])).view(-1, 1, 1).cuda()
+
+
+def renormalize(input):
+    input = input * origin_std + origin_mean
+    return (input - new_mean) / new_std
+
+
 def train_val(source_loader, target_loader, val_loader, model, criterion, optimizer, args):
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -229,7 +240,7 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
 
         fake_target_var = netG_A(source_var)
         rec_source_var = netG_B(fake_target_var)
-        rec_source_output = model(rec_source_var)
+        rec_source_output = model(renormalize(rec_source_var))
 
         loss = criterion(rec_source_output, label_var)
 
@@ -280,7 +291,7 @@ def validate(val_loader, model, criterion, args):
         target_var = torch.autograd.Variable(target, volatile=True)
 
         # compute output
-        output = model(input_var)
+        output = model(renormalize(input_var))
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss
