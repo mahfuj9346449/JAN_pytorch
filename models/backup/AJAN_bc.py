@@ -55,29 +55,38 @@ class Net(nn.Module):
         self.fcb = nn.Linear(self.feature_dim, args.bottleneck)
         self.fcb.weight.data.normal_(0, 0.005)
         self.fcb.bias.data.fill_(0.1)
-        self.fc = nn.Linear(args.bottleneck, args.classes)
-        self.fc.weight.data.normal_(0, 0.01)
-        self.fc.bias.data.fill_(0.0)
+        self.fcs = nn.Linear(args.bottleneck, args.classes, bias=False)
+        self.fcs.weight.data.normal_(0, 0.01)
+        # self.fcs.bias.data.fill_(0.0)
+        self.fct = nn.Linear(args.bottleneck, args.classes, bias=False)
+        self.fct.weight.data = self.fcs.weight.data.clone()
+        # self.fct.bias.data = self.fcs.bias.data.clone()
 
         args.SGD_param = [
             {'params': self.origin_feature.parameters(), 'lr': 1,},
             {'params': self.fcb.parameters(), 'lr': 10},
-            {'params': self.fc.parameters(), 'lr': 10}
+            {'params': self.fcs.parameters(), 'lr': 10},
+            {'params': self.fct.parameters(), 'lr': 10},
         ]
 
-    def forward(self, x):
+    def forward(self, x, asym=False):
         x = self.origin_feature(x)
         if self.arch.startswith('densenet'):
             x = F.relu(x, inplace=True)
             x = F.avg_pool2d(x, kernel_size=7)
         x = x.view(x.size(0), -1)
         x = self.fcb(x)
-        y = self.fc(x)
-        
-        return y, x
+        if asym:
+            xs, xt = x.chunk(2, 0)
+            ys = self.fcs(xs)
+            yt = self.fct(xt)
+            return ys, yt, xs, xt
+        else:
+            y = self.fct(x)
+            return y, x
 
 
-def train_val(source_loader, target_loader, val_loader, val_source_loader, model, criterion, optimizer, args):
+def train_val(source_loader, target_loader, val_loader, model, criterion, optimizer, args):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -86,6 +95,12 @@ def train_val(source_loader, target_loader, val_loader, val_source_loader, model
 
     source_cycle = iter(source_loader)
     target_cycle = iter(target_loader)
+    
+    U = torch.autograd.Variable(torch.Tensor(args.bottleneck, args.classes)).cuda()
+    Vs = torch.autograd.Variable(torch.Tensor(args.classes, args.classes), requires_grad=True).cuda()
+    Vs.data.normal_(0, 0.01)
+    Vt = torch.autograd.Variable(torch.Tensor(args.classes, args.classes), requires_grad=True).cuda()
+    Vt.data.normal_(0, 0.01)
 
     end = time.time()
     model.train(True)
@@ -109,22 +124,28 @@ def train_val(source_loader, target_loader, val_loader, val_source_loader, model
         label_var = torch.autograd.Variable(label)
 
         inputs = torch.cat([source_var, target_var], 0)
-        outputs, features = model(inputs)
-        source_output, target_output = outputs.chunk(2, 0)
-        source_feature, target_feature = features.chunk(2, 0)
+        source_output, target_output, source_feature, target_feature = model(inputs, asym=True)
         
+        if i % 30 == 0:
+            W = torch.cat([model.fcs.weight.data.t(), model.fct.weight.data.t()], 1)
+            V = torch.cat([Vs.data, Vt.data], 1)
+            u, _, _ = torch.svd(torch.mm(W, V.t()))
+            U.data = u.clone()
+            
         acc_loss = criterion(source_output, label_var)
         softmax = nn.Softmax()
-        jmmd_loss = JMMDLoss([source_feature, softmax(source_output)], 
-                             [target_feature, softmax(target_output)], b_test=True, graph_loss=.1)
+        jmmd_loss = JMMDLoss([source_feature, softmax(source_output)], [target_feature, softmax(target_output)])
+        rec_loss = (model.fcs.weight.t() - torch.mm(U, Vs)).pow(2).mean() \
+                 + (model.fct.weight.t() - torch.mm(U, Vt)).pow(2).mean()
 
-        loss = acc_loss + 0.3 * jmmd_loss
+        loss = acc_loss + jmmd_loss + args.gammaC*rec_loss
 
         prec1, _ = accuracy(source_output.data, label, topk=(1, 5))
 
         losses.update(loss.data[0], args.batch_size)
         loss1 = jmmd_loss.data[0]
         loss2 = acc_loss.data[0]
+        loss3 = rec_loss.data[0]
         top1.update(prec1[0], args.batch_size)
 
         # compute gradient and do SGD step
@@ -140,29 +161,19 @@ def train_val(source_loader, target_loader, val_loader, val_source_loader, model
         if i % args.print_freq == 0:
             print('Iter: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Loss {loss1:.4f}/{loss2:.4f}\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'Loss {loss1:.4f}/{loss2:.4f}/{loss3:.4f}\t'
+                  'Loss {loss.val:.4f}\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                    i, args.train_iter, batch_time=batch_time,
-                      loss=losses, top1=top1, loss1=loss1, loss2=loss2))
+                      loss=losses, top1=top1, loss1=loss1, loss2=loss2, loss3=loss3))
 
         if i % args.test_iter == 0 and i != 0:
-            t_fc7, t_fc8, t_label = validate(val_loader, model, criterion, args)
-            s_fc7, s_fc8, s_label = validate(val_source_loader, model, criterion, args)
+            validate(val_loader, model, criterion, args)
             model.train(True)
             batch_time.reset()
             data_time.reset()
             losses.reset()
             top1.reset()
-            
-            np.save("results/JAN/JAN_%05d_savedata.npy"%i, {
-                't_fc7': t_fc7,
-                't_fc8': t_fc8,
-                't_label': t_label,
-                's_fc7': s_fc7,
-                's_fc8': s_fc8,
-                's_label': s_label,
-            })
 
 
 
@@ -174,10 +185,6 @@ def validate(val_loader, model, criterion, args):
 
     # switch to evaluate mode
     model.eval()
-    
-    features = []
-    outputs = []
-    labels = []
 
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
@@ -186,13 +193,9 @@ def validate(val_loader, model, criterion, args):
         target_var = torch.autograd.Variable(target, volatile=True)
 
         # compute output
-        output, feature = model(input_var)
-        softmax = nn.Softmax()
-        features.append(feature.data.cpu().numpy())
-        outputs.append(softmax(output).data.cpu().numpy())
-        labels.append(target_var.data.cpu().numpy())
+        output, _ = model(input_var)
         loss = criterion(output, target_var)
-        
+
         # measure accuracy and record loss
         prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
         losses.update(loss.data[0], input.size(0))
@@ -206,4 +209,4 @@ def validate(val_loader, model, criterion, args):
     print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
 
-    return np.vstack(features), np.vstack(outputs), np.hstack(labels)
+    return top1.avg

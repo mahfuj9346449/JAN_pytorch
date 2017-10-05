@@ -27,12 +27,12 @@ def guassian_kernel(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None
     bandwidth /= kernel_mul ** (kernel_num // 2)
     bandwidth_list = [bandwidth * (kernel_mul**i) for i in range(kernel_num)]
     kernel_val = [torch.exp(-L2_distance / bandwidth_temp) for bandwidth_temp in bandwidth_list]
-    return sum(kernel_val)#/len(kernel_val)
+    return sum(kernel_val) / len(kernel_val), L2_distance
 
 
 def MMDLoss(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
     batch_size = int(source.size()[0])
-    kernels = guassian_kernel(source, target,
+    kernels, _ = guassian_kernel(source, target,
         kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
     loss = 0
     for i in range(batch_size):
@@ -43,29 +43,49 @@ def MMDLoss(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
     return loss / float(batch_size)
 
 
-def JMMDLoss(source_list, target_list, kernel_muls=[2.0, 2.0], kernel_nums=[5, 1], fix_sigma_list=[None, 1.3]):
+def JMMDLoss(source_list, target_list, kernel_muls=[2.0, 2.0], 
+             kernel_nums=[5, 1], fix_sigma_list=[None, 1.33],
+             b_test=False, graph_loss=0.):
+    knn = 3
     batch_size = int(source_list[0].size()[0])
     layer_num = len(source_list)
     joint_kernels = None
+    feature_kernel = None
+    output_distance = None
     for i in range(layer_num):
         source = source_list[i]
         target = target_list[i]
         kernel_mul = kernel_muls[i]
         kernel_num = kernel_nums[i]
         fix_sigma = fix_sigma_list[i]
-        kernels = guassian_kernel(source, target,
+        kernels, distance = guassian_kernel(source, target,
             kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
         if joint_kernels is not None:
             joint_kernels = joint_kernels * kernels
+            output_distance = distance
         else:
             joint_kernels = kernels
+            feature_kernel = kernels
     loss = 0
-    for i in range(batch_size):
-        s1, s2 = i, (i+1)%batch_size
-        t1, t2 = s1+batch_size, s2+batch_size
-        loss += joint_kernels[s1, s2] + joint_kernels[t1, t2]
-        loss -= joint_kernels[s1, t2] + joint_kernels[s2, t1]
-    return loss / float(batch_size)
+    if graph_loss > 0:
+        sorted, indices = torch.sort(feature_kernel, descending=True)
+        for i in range(batch_size):
+            for j in indices[i, :knn].data:
+                loss += feature_kernel[i, j] * output_distance[i, j]
+        loss = loss * graph_loss
+    if b_test:
+        loss += joint_kernels[:batch_size, :batch_size].sum()
+        loss += joint_kernels[batch_size:, batch_size:].sum()
+        loss -= joint_kernels[:batch_size, batch_size:].sum()
+        loss -= joint_kernels[batch_size:, :batch_size].sum()
+        return loss / float(batch_size)**2
+    else:
+        for i in range(batch_size):
+            s1, s2 = i, (i+1)%batch_size
+            t1, t2 = s1+batch_size, s2+batch_size
+            loss += joint_kernels[s1, s2] + joint_kernels[t1, t2]
+            loss -= joint_kernels[s1, t2] + joint_kernels[s2, t1]
+        return loss / float(batch_size)
 
 
 def CrossEntropyLoss(logits, target):

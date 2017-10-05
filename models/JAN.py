@@ -77,7 +77,7 @@ class Net(nn.Module):
         return y, x
 
 
-def train_val(source_loader, target_loader, val_loader, model, criterion, optimizer, args):
+def train_val(source_loader, target_loader, val_loader, val_source_loader, model, criterion, optimizer, args):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -146,12 +146,22 @@ def train_val(source_loader, target_loader, val_loader, model, criterion, optimi
                       loss=losses, top1=top1, loss1=loss1, loss2=loss2))
 
         if i % args.test_iter == 0 and i != 0:
-            validate(val_loader, model, criterion, args)
+            t_fc7, t_fc8, t_label = validate(val_loader, model, criterion, args)
+            s_fc7, s_fc8, s_label = validate(val_source_loader, model, criterion, args)
             model.train(True)
             batch_time.reset()
             data_time.reset()
             losses.reset()
             top1.reset()
+            
+            np.save("results/JAN/JAN_%05d_savedata.npy"%i, {
+                't_fc7': t_fc7,
+                't_fc8': t_fc8,
+                't_label': t_label,
+                's_fc7': s_fc7,
+                's_fc8': s_fc8,
+                's_label': s_label,
+            })
 
 
 
@@ -163,6 +173,10 @@ def validate(val_loader, model, criterion, args):
 
     # switch to evaluate mode
     model.eval()
+    
+    features = []
+    outputs = []
+    labels = []
 
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
@@ -171,9 +185,13 @@ def validate(val_loader, model, criterion, args):
         target_var = torch.autograd.Variable(target, volatile=True)
 
         # compute output
-        output, _ = model(input_var)
+        output, feature = model(input_var)
+        softmax = nn.Softmax()
+        features.append(feature.data.cpu().numpy())
+        outputs.append(softmax(output).data.cpu().numpy())
+        labels.append(target_var.data.cpu().numpy())
         loss = criterion(output, target_var)
-
+        
         # measure accuracy and record loss
         prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
         losses.update(loss.data[0], input.size(0))
@@ -187,4 +205,4 @@ def validate(val_loader, model, criterion, args):
     print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
 
-    return top1.avg
+    return np.vstack(features), np.vstack(outputs), np.hstack(labels)
