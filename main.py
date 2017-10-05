@@ -105,8 +105,8 @@ def main():
     valdir = '/home/dataset/office/domain_adaptation_images/webcam/images'
     
     # TODO: For debug
-    normalize = transforms.Normalize([0.5, 0.5, 0.5],
-                                     [0.5, 0.5, 0.5])
+    normalize = transforms.Normalize([0.485, 0.456, 0.406],
+                                     [0.229, 0.224, 0.225])
 
     class MyScale(object):
         def __init__(self, size, interpolation=Image.BILINEAR):
